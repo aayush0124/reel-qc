@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reelqc"
+dynamic = ["version"]
+description = "Delivery QC gate for short-form video: format, loudness, black, freeze, silence and hook-motion checks with pipeline exit codes."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Aayush Paliwal" }]
+requires-python = ">=3.9"
+dependencies = []  # stdlib only; needs ffmpeg + ffprobe on PATH
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Video",
+    "Environment :: Console",
+]
+
+[project.scripts]
+reelqc = "reelqc.__main__:main"
+
+[tool.setuptools]
+packages = ["reelqc"]
+
+[tool.setuptools.dynamic]
+version = { attr = "reelqc.core.__version__" }

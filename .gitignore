@@ -1,0 +1,7 @@
+# generated test clips (python tests/make_fixtures.py rebuilds them)
+tests/fixtures/
+__pycache__/
+*.egg-info/
+build/
+dist/
+.venv/
