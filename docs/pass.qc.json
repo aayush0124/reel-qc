@@ -1,0 +1,118 @@
+{
+  "tool": "reelqc 0.1.0",
+  "file": "tests/fixtures/pass.mp4",
+  "profile": "reel",
+  "settings": {
+    "fps": 30.0,
+    "fps_tol": 0.5,
+    "codecs": "h264,hevc",
+    "lufs": -14.0,
+    "lufs_tol": 1.5,
+    "true_peak_max": -1.0,
+    "black_max": 0.5,
+    "black_pix_th": 0.1,
+    "freeze_max": 2.0,
+    "freeze_noise_db": -60.0,
+    "silence_max": 2.0,
+    "silence_db": -50.0,
+    "hook_s": 2.0,
+    "hook_motion_min": 1.5,
+    "sheet_frames": 12,
+    "width": 1080,
+    "height": 1920,
+    "min_s": 15.0,
+    "max_s": 90.0
+  },
+  "media": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30.0,
+    "vcodec": "h264",
+    "pix_fmt": "yuv420p",
+    "acodec": "aac",
+    "duration": 16.0
+  },
+  "measured": {
+    "black": [],
+    "freeze": [],
+    "silence": [],
+    "lufs": -14.0,
+    "true_peak": -13.0,
+    "hook_motion": 8.1
+  },
+  "checks": [
+    {
+      "check": "aspect",
+      "status": "PASS",
+      "detail": "9:16 (1080x1920), expected 9:16"
+    },
+    {
+      "check": "resolution",
+      "status": "PASS",
+      "detail": "1080x1920, expected 1080x1920"
+    },
+    {
+      "check": "fps",
+      "status": "PASS",
+      "detail": "30.00 fps, expected 30 +/-0.5"
+    },
+    {
+      "check": "codec",
+      "status": "PASS",
+      "detail": "h264, allowed h264/hevc"
+    },
+    {
+      "check": "pix_fmt",
+      "status": "PASS",
+      "detail": "yuv420p, expected yuv420p (8-bit 4:2:0 plays everywhere)"
+    },
+    {
+      "check": "audio",
+      "status": "PASS",
+      "detail": "audio stream: aac"
+    },
+    {
+      "check": "duration",
+      "status": "PASS",
+      "detail": "16.00s, window 15-90s"
+    },
+    {
+      "check": "loudness",
+      "status": "PASS",
+      "detail": "-14.0 LUFS integrated, target -14 +/-1.5"
+    },
+    {
+      "check": "true_peak",
+      "status": "PASS",
+      "detail": "-13.0 dBTP, max -1"
+    },
+    {
+      "check": "silence",
+      "status": "PASS",
+      "detail": "silence > 2s: none"
+    },
+    {
+      "check": "black",
+      "status": "PASS",
+      "detail": "black > 0.5s: none"
+    },
+    {
+      "check": "first_frame",
+      "status": "PASS",
+      "detail": "first frame has picture"
+    },
+    {
+      "check": "freeze",
+      "status": "PASS",
+      "detail": "frozen > 2s: none"
+    },
+    {
+      "check": "hook_motion",
+      "status": "PASS",
+      "detail": "8.1 mean frame diff in first 2s, min 1.5"
+    }
+  ],
+  "verdict": "PASS",
+  "exit_code": 0,
+  "sheet": "docs/pass.sheet.png"
+}
