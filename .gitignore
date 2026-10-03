@@ -5,3 +5,6 @@ __pycache__/
 build/
 dist/
 .venv/
+
+# generated demo renders (python docs/awa-sample/make_sample.py rebuilds them)
+docs/awa-sample/*.mp4

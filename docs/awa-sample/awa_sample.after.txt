@@ -1,0 +1,20 @@
+reelqc 0.2.0  docs/awa-sample/awa_sample.mp4  profile=awa
+media: 1080x1920 30.00fps h264/yuv420p, audio aac, 30.00s
+
+  PASS  aspect       9:16 (1080x1920), expected 9:16
+  PASS  resolution   1080x1920, expected 1080x1920
+  PASS  fps          30.00 fps, expected 30 +/-0.5
+  PASS  codec        h264, allowed h264/hevc
+  PASS  pix_fmt      yuv420p, expected yuv420p (8-bit 4:2:0 plays everywhere)
+  PASS  audio        audio stream: aac
+  PASS  duration     30.00s, window 15-90s
+  FAIL  av_length    video ends 3.00s before audio (last frame holds), max gap 0.5s
+  PASS  loudness     -14.0 LUFS integrated, target -14 +/-1.5
+  PASS  true_peak    -13.0 dBTP, max -1
+  PASS  silence      silence > 2s: none
+  PASS  black        black > 0.5s: none
+  PASS  first_frame  first frame has picture
+  FAIL  freeze       frozen > 2s: none; card held 0.37-3.00s, 11.00-14.50s, 24.00-30.00s, max 5s
+  WARN  hook_motion  0.12 mean frame diff in first 2s, min 1.5
+
+VERDICT: FAIL (exit 1)

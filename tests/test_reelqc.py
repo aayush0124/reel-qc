@@ -21,11 +21,28 @@ EXPECT = {  # clip: (exit code, {check: status}); unlisted checks must PASS
     "black_gap": (1, {"black": "FAIL"}),
     "black_first": (1, {"first_frame": "FAIL"}),
     "too_loud": (1, {"loudness": "FAIL", "true_peak": "FAIL"}),
-    "no_audio": (1, {"audio": "FAIL", "loudness": "SKIP", "true_peak": "SKIP", "silence": "SKIP"}),
+    "no_audio": (1, {"audio": "FAIL", "av_length": "SKIP", "loudness": "SKIP", "true_peak": "SKIP",
+                     "silence": "SKIP"}),
     "wrong_aspect": (1, {"aspect": "FAIL", "resolution": "WARN"}),
     "frozen": (1, {"freeze": "FAIL"}),
     "silence": (10, {"silence": "WARN"}),
     "static_hook": (10, {"hook_motion": "WARN"}),
+    "video_short": (1, {"av_length": "FAIL"}),
+    "audio_short": (10, {"av_length": "WARN"}),
+    # the generic defaults read the #0A0B14 brand background as black and held cards as frozen;
+    # that is what the awa profile is for (AWA_EXPECT)
+    "awa_cards": (1, {"black": "FAIL", "freeze": "FAIL"}),
+    "awa_open": (1, {"black": "FAIL", "first_frame": "FAIL", "freeze": "FAIL", "hook_motion": "WARN"}),
+}
+AWA_EXPECT = {
+    "awa_cards": (0, {}),
+    "awa_open": (10, {"hook_motion": "WARN"}),  # a text-card open is a static hook; WARN by design
+    "awa_overrun": (1, {"av_length": "FAIL"}),  # its card sample must come from inside the picture
+    # tuned for the brand, not loosened: real defects still block
+    "black_gap": (1, {"black": "FAIL"}),
+    "black_first": (1, {"first_frame": "FAIL"}),
+    "frozen": (1, {"freeze": "FAIL"}),
+    "video_short": (1, {"av_length": "FAIL"}),
 }
 
 
@@ -33,14 +50,42 @@ def cli(*args):
     return subprocess.run([sys.executable, "-m", "reelqc", *args], cwd=ROOT, capture_output=True, text=True)
 
 
-def test_fixture_verdicts(tmp):
-    for clip, (code, special) in EXPECT.items():
-        r = cli("check", str(FIX / f"{clip}.mp4"), "--profile", "reel", "--out", str(tmp), "--no-sheet")
+def verdicts(tmp, profile, expect):
+    for clip, (code, special) in expect.items():
+        r = cli("check", str(FIX / f"{clip}.mp4"), "--profile", profile, "--out", str(tmp), "--no-sheet")
         assert r.returncode == code, f"{clip}: exit {r.returncode}, expected {code}\n{r.stdout}{r.stderr}"
         got = {c["check"]: c["status"] for c in json.loads((tmp / f"{clip}.qc.json").read_text())["checks"]}
         want = {name: special.get(name, "PASS") for name in got}
         assert got == want, f"{clip}: {got} != {want}"
-        print(f"  {clip:<13} exit {code:>2}  {' '.join(f'{k}={v}' for k, v in special.items()) or 'all PASS'}")
+        print(f"  {profile:<5} {clip:<13} exit {code:>2}  "
+              f"{' '.join(f'{k}={v}' for k, v in special.items()) or 'all PASS'}")
+
+
+def test_fixture_verdicts(tmp):
+    verdicts(tmp, "reel", EXPECT)
+
+
+def test_awa_profile(tmp):
+    verdicts(tmp, "awa", AWA_EXPECT)
+
+
+def test_av_length_detail(tmp):
+    short = check(FIX / "video_short.mp4", "reel")
+    row = next(c for c in short["checks"] if c["check"] == "av_length")
+    assert "video ends 3.00s before audio" in row["detail"], row
+    assert (short["media"]["video_end"], short["media"]["audio_end"]) == (13.0, 16.0), short["media"]
+    # the gap is a threshold like any other
+    assert check(FIX / "video_short.mp4", "reel", av_gap_max=5)["exit_code"] == 0
+
+
+def test_card_hold_limit(tmp):
+    # each awa_cards card holds 3 s: a 2.5 s limit must turn them back into a freeze FAIL
+    report = check(FIX / "awa_cards.mp4", "awa", card_hold_max=2.5)
+    row = next(c for c in report["checks"] if c["check"] == "freeze")
+    assert report["exit_code"] == 1 and row["status"] == "FAIL", row
+    assert "card held 5.00-8.00s, 13.00-16.00s" in row["detail"], row
+    # turning card holds on does not hide a freeze in footage
+    assert check(FIX / "frozen.mp4", "reel", card_hold_max=5)["exit_code"] == 1
 
 
 def test_overrides(tmp):

@@ -6,18 +6,23 @@ import shutil
 import subprocess
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 EXIT_CODES = {PASS: 0, WARN: 10, FAIL: 1}  # 2 = could not run (bad args, missing ffmpeg, unreadable file)
 
 # Shared thresholds. Units: seconds, LUFS, dBTP, dB, 0-255 luma for hook motion.
+# *_pix_th luma levels use blackdetect's 0-1 scale: 16 + pix_th * 219 on 8-bit limited range.
 DEFAULTS = dict(
     fps=30.0, fps_tol=0.5,
     codecs="h264,hevc",
+    av_gap_max=0.5,
     lufs=-14.0, lufs_tol=1.5, true_peak_max=-1.0,
     black_max=0.5, black_pix_th=0.10,
     freeze_max=2.0, freeze_noise_db=-60.0,
+    # A freeze whose frame is a designed card (card_share of pixels at or below card_pix_th) may
+    # hold up to card_hold_max seconds. 0 turns this off: every freeze is judged as footage.
+    card_hold_max=0.0, card_pix_th=0.10, card_share=0.90,
     silence_max=2.0, silence_db=-50.0,
     hook_s=2.0, hook_motion_min=1.5,
     sheet_frames=12,
@@ -29,6 +34,12 @@ PROFILES = {
     "yt": dict(DEFAULTS, width=1920, height=1080, min_s=60.0, max_s=3600.0,
                freeze_max=5.0, silence_max=3.0),  # long-form: slides and pauses are normal
     "square": dict(DEFAULTS, width=1080, height=1080, min_s=5.0, max_s=60.0),
+    # @AIwithAayush reels: cards sit on the brand background #0A0B14 (luma ~26). The default
+    # black_pix_th of 0.10 draws the line at ~38, so every brand card reads as a black frame.
+    # 0.03 (~22.6) still catches true black (16) plus codec noise; the brand never uses pure black.
+    # Text cards and end slates are static by design, so they may hold up to 5 s.
+    "awa": dict(DEFAULTS, width=1080, height=1920, min_s=15.0, max_s=90.0,
+                black_pix_th=0.03, card_hold_max=5.0),
 }
 
 
@@ -77,7 +88,17 @@ def probe(path):
         vcodec=v["codec_name"], pix_fmt=v.get("pix_fmt"),
         acodec=a["codec_name"] if a else None,
         duration=round(float(data.get("format", {}).get("duration") or v.get("duration") or 0), 3),
+        video_end=_stream_end(v), audio_end=_stream_end(a) if a else None,
     )
+
+
+def _stream_end(s):
+    """Where a stream stops, in seconds. The container duration is the longest stream, so a video
+    track that ends early (frozen last frame) or an audio track that ends early (dead air) is
+    invisible to it. None when the container does not report per-stream durations (e.g. MKV)."""
+    if s.get("duration") is None:
+        return None
+    return round(float(s.get("start_time") or 0) + float(s["duration"]), 3)
 
 
 def _spans(log, start_key, end_key, until):
@@ -127,6 +148,19 @@ def hook_motion(path, seconds):
     frames = [raw[i:i + n] for i in range(0, len(raw) - n + 1, n)]
     diffs = [sum(abs(x - y) for x, y in zip(a, b)) / n for a, b in zip(frames, frames[1:])]
     return round(sum(diffs) / len(diffs), 2) if diffs else 0.0
+
+
+def dark_share(path, t, pixels, pix_th):
+    """Share of pixels at or below `pix_th` (blackdetect's scale) in the frame at `t` seconds.
+    Used on a freeze span: its frames are identical, so one frame stands for the whole span.
+    Returns 0.0 if the frame cannot be read, so the span is judged as footage (the strict side)."""
+    raw = _run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(path), "-an", "-frames:v", "1",
+                "-pix_fmt", "yuv420p", "-f", "rawvideo", "-"], text=False).stdout
+    luma = raw[:pixels]  # yuv420p: the full-size Y plane comes first, always limited range
+    if len(luma) < pixels:
+        return 0.0
+    level = 16 + pix_th * 219
+    return luma.translate(bytes(v <= level for v in range(256))).count(1) / pixels
 
 
 def contact_sheet(path, out, duration, frames):
@@ -184,8 +218,19 @@ def check(path, profile="reel", sheet=None, **overrides):
 
     if m["acodec"] is None:
         results += [dict(check=c, status=SKIP, detail="no audio stream")
-                    for c in ("loudness", "true_peak", "silence")]
+                    for c in ("av_length", "loudness", "true_peak", "silence")]
     else:
+        ve, ae, tol = m["video_end"], m["audio_end"], p["av_gap_max"]
+        if ve is None or ae is None:
+            results.append(dict(check="av_length", status=SKIP,
+                                detail="container does not report per-stream lengths"))
+        else:  # video ending first freezes the last frame; audio ending first is dead air
+            gap = ae - ve
+            status = FAIL if gap > tol else WARN if -gap > tol else PASS
+            detail = {FAIL: f"video ends {gap:.2f}s before audio (last frame holds)",
+                      WARN: f"audio ends {-gap:.2f}s before video (dead air)",
+                      PASS: f"video {ve:.2f}s, audio {ae:.2f}s"}[status]
+            results.append(dict(check="av_length", status=status, detail=f"{detail}, max gap {tol:g}s"))
         lufs, tp = d["lufs"], d["true_peak"]
         add("loudness", lufs is not None and abs(lufs - p["lufs"]) <= p["lufs_tol"],
             f"{lufs} LUFS integrated, target {p['lufs']:g} +/-{p['lufs_tol']:g}")
@@ -199,7 +244,19 @@ def check(path, profile="reel", sheet=None, **overrides):
     first_black = any(s <= 0.05 for s, _ in d["black"])  # tolerate a non-zero first pts
     add("first_frame", not first_black,
         "first frame is black (dead hook)" if first_black else "first frame has picture")
-    add("freeze", not d["freeze"], f"frozen > {p['freeze_max']:g}s: {_fmt_spans(d['freeze']) or 'none'}")
+    # An open freeze runs to the container's end (the platform holds the last frame), so take
+    # the card sample from inside the picture.
+    picture_end = m["video_end"] or m["duration"]
+    frozen, holds = [], []
+    for s, e in d["freeze"]:
+        card = p["card_hold_max"] > 0 and dark_share(
+            path, (s + min(e, picture_end)) / 2, w * h, p["card_pix_th"]) >= p["card_share"]
+        (holds if card else frozen).append((s, e))
+    long_holds = [(s, e) for s, e in holds if e - s > p["card_hold_max"]]
+    detail = f"frozen > {p['freeze_max']:g}s: {_fmt_spans(frozen) or 'none'}"
+    if holds:
+        detail += f"; card held {_fmt_spans(holds)}, max {p['card_hold_max']:g}s"
+    add("freeze", not frozen and not long_holds, detail)
     add("hook_motion", motion >= p["hook_motion_min"],
         f"{motion} mean frame diff in first {p['hook_s']:g}s, min {p['hook_motion_min']:g}", WARN)
 

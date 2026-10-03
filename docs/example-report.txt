@@ -1,4 +1,4 @@
-reelqc 0.1.0  tests/fixtures/pass.mp4  profile=reel
+reelqc 0.2.0  tests/fixtures/pass.mp4  profile=reel
 media: 1080x1920 30.00fps h264/yuv420p, audio aac, 16.00s
 
   PASS  aspect       9:16 (1080x1920), expected 9:16
@@ -8,6 +8,7 @@ media: 1080x1920 30.00fps h264/yuv420p, audio aac, 16.00s
   PASS  pix_fmt      yuv420p, expected yuv420p (8-bit 4:2:0 plays everywhere)
   PASS  audio        audio stream: aac
   PASS  duration     16.00s, window 15-90s
+  PASS  av_length    video 16.00s, audio 16.00s, max gap 0.5s
   PASS  loudness     -14.0 LUFS integrated, target -14 +/-1.5
   PASS  true_peak    -13.0 dBTP, max -1
   PASS  silence      silence > 2s: none

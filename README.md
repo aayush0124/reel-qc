@@ -33,16 +33,27 @@ Defaults below are for the `reel` profile. A FAIL blocks; a WARN passes with exi
 | `pix_fmt` | pixel format | yuv420p | WARN |
 | `audio` | an audio stream exists | required | FAIL |
 | `duration` | container duration | 15–90 s | FAIL |
+| `av_length` | where the video and audio streams each end | within 0.5 s of each other | FAIL if the video ends first (the platform holds the last frame), WARN if the audio ends first (dead air) |
 | `loudness` | EBU R128 integrated loudness (`ebur128`) | −14 LUFS ± 1.5 | FAIL |
 | `true_peak` | EBU R128 true peak (`ebur128=peak=true`) | ≤ −1.0 dBTP | FAIL |
 | `silence` | `silencedetect` below −50 dB | none longer than 2 s | WARN |
 | `black` | `blackdetect`, pixel threshold 0.10 | none longer than 0.5 s | FAIL |
 | `first_frame` | `blackdetect` span starting at t=0 | first frame not black (dead hook) | FAIL |
-| `freeze` | `freezedetect`, −60 dB noise floor | none longer than 2 s | FAIL |
+| `freeze` | `freezedetect`, −60 dB noise floor | none longer than 2 s (designed cards: see `card_hold_max`) | FAIL |
 | `hook_motion` | mean abs frame difference over the first 2 s, 64x64 grey frames at 10 fps | ≥ 1.5 | WARN |
 
 All four ffmpeg detectors run in a single decode pass. A 16 s 1080x1920 clip checks in about
 a second on a laptop.
+
+**Why `av_length` exists.** The container duration is the longest stream, and every detector
+only sees frames that exist. A voiceover muxed onto a timeline that is 3 s shorter therefore
+passed every other check, while the platform showed a frozen last frame for those 3 s.
+
+**Designed cards.** A text card or end slate is static on purpose, and `freezedetect` cannot
+tell it from a shot that stalled. With `card_hold_max` above 0, each freeze is sampled once: if
+at least `card_share` (90 %) of its pixels are at or below `card_pix_th` (the card background),
+it may hold up to `card_hold_max` seconds; any other freeze still fails at `freeze_max`. Off
+(0) in every profile except `awa`.
 
 **How the hook threshold was set.** Downscaling with area averaging removes grain, and a fixed
 10 fps sample keeps the number comparable across 24/30/60 fps sources. I measured 14 rendered
@@ -59,6 +70,14 @@ deliberate creative choice.
 | `short` | 1080x1920 (9:16) | 5–180 s | YouTube Shorts |
 | `yt` | 1920x1080 (16:9) | 60–3600 s | long-form: freeze 5 s, silence 3 s |
 | `square` | 1080x1080 (1:1) | 5–60 s | feed video |
+| `awa` | 1080x1920 (9:16) | 15–90 s | @AIwithAayush reels: black pixel threshold 0.03, cards may hold 5 s |
+
+`awa` is `reel` tuned for a brand built on a near-black background (#0A0B14, luma ~26). At the
+default `black_pix_th` of 0.10 (luma ~38) every brand card reads as a black frame, and a reel
+that opens on one fails `first_frame`. 0.03 (~22.6) still trips on true black and codec noise
+around it; the brand never uses pure black, so a black frame there is always a defect. An empty
+brand-background first frame is not treated as a dead hook; `hook_motion` still flags a
+static open.
 
 Any threshold can be overridden: `--set KEY=VALUE` on the command line, keyword arguments in
 Python. `reelqc profiles` prints every key.
@@ -138,7 +157,7 @@ verdict and exit code. It raises `QCError` when the check itself cannot run.
 The passing test clip, from [`docs/example-report.txt`](docs/example-report.txt):
 
 ```
-reelqc 0.1.0  tests/fixtures/pass.mp4  profile=reel
+reelqc 0.2.0  tests/fixtures/pass.mp4  profile=reel
 media: 1080x1920 30.00fps h264/yuv420p, audio aac, 16.00s
 
   PASS  aspect       9:16 (1080x1920), expected 9:16
@@ -148,6 +167,7 @@ media: 1080x1920 30.00fps h264/yuv420p, audio aac, 16.00s
   PASS  pix_fmt      yuv420p, expected yuv420p (8-bit 4:2:0 plays everywhere)
   PASS  audio        audio stream: aac
   PASS  duration     16.00s, window 15-90s
+  PASS  av_length    video 16.00s, audio 16.00s, max gap 0.5s
   PASS  loudness     -14.0 LUFS integrated, target -14 +/-1.5
   PASS  true_peak    -13.0 dBTP, max -1
   PASS  silence      silence > 2s: none
@@ -177,22 +197,38 @@ VERDICT: FAIL (exit 1)
 python tests/test_reelqc.py
 ```
 
-`tests/make_fixtures.py` generates nine 16 s clips with ffmpeg `lavfi` (`testsrc2` with a slow
-pan, plus a `sine` tone measured at −14 LUFS), each with exactly one defect. A fixture passes
-only if it gets the expected exit code, the defect lands on the expected check, and every other
-check passes, so a clip that fails for the wrong reason is caught too.
+`tests/make_fixtures.py` generates fourteen 16 s clips with ffmpeg `lavfi` (`testsrc2` with a
+slow pan, plus a `sine` tone measured at −14 LUFS), each with exactly one defect for the profile
+it is tested against. The `awa_*` clips use brand cards drawn as boxes on #0A0B14, so no
+font is needed. A fixture passes only if it gets the expected exit code, the defect lands on the
+expected check, and every other check passes, so a clip that fails for the wrong reason is caught
+too. Under `awa`, the clips with real defects must still fail.
 
 ```
-  pass          exit  0  all PASS
-  black_gap     exit  1  black=FAIL
-  black_first   exit  1  first_frame=FAIL
-  too_loud      exit  1  loudness=FAIL true_peak=FAIL
-  no_audio      exit  1  audio=FAIL loudness=SKIP true_peak=SKIP silence=SKIP
-  wrong_aspect  exit  1  aspect=FAIL resolution=WARN
-  frozen        exit  1  freeze=FAIL
-  silence       exit 10  silence=WARN
-  static_hook   exit 10  hook_motion=WARN
+  reel  pass          exit  0  all PASS
+  reel  black_gap     exit  1  black=FAIL
+  reel  black_first   exit  1  first_frame=FAIL
+  reel  too_loud      exit  1  loudness=FAIL true_peak=FAIL
+  reel  no_audio      exit  1  audio=FAIL av_length=SKIP loudness=SKIP true_peak=SKIP silence=SKIP
+  reel  wrong_aspect  exit  1  aspect=FAIL resolution=WARN
+  reel  frozen        exit  1  freeze=FAIL
+  reel  silence       exit 10  silence=WARN
+  reel  static_hook   exit 10  hook_motion=WARN
+  reel  video_short   exit  1  av_length=FAIL
+  reel  audio_short   exit 10  av_length=WARN
+  reel  awa_cards     exit  1  black=FAIL freeze=FAIL
+  reel  awa_open      exit  1  black=FAIL first_frame=FAIL freeze=FAIL hook_motion=WARN
 ok    test_fixture_verdicts
+  awa   awa_cards     exit  0  all PASS
+  awa   awa_open      exit 10  hook_motion=WARN
+  awa   awa_overrun   exit  1  av_length=FAIL
+  awa   black_gap     exit  1  black=FAIL
+  awa   black_first   exit  1  first_frame=FAIL
+  awa   frozen        exit  1  freeze=FAIL
+  awa   video_short   exit  1  av_length=FAIL
+ok    test_awa_profile
+ok    test_av_length_detail
+ok    test_card_hold_limit
 ok    test_overrides
 ok    test_cannot_run_is_exit_2
 ok    test_contact_sheet
@@ -205,6 +241,9 @@ ok    test_contact_sheet
 - `hook_motion` measures pixel change, not whether a hook is any good. It catches the dead
   open, not the boring one.
 - `black` reads luma. An intentionally dark shot can trip it; lower `black_pix_th` for that job.
+- `freeze` needs frames that repeat. A grain or noise pass applied after a shot stalls makes
+  every frame differ, and the stall passes. Known gap, not yet fixed; see
+  [`docs/awa-audit.md`](docs/awa-audit.md).
 
 ## Credits
 
